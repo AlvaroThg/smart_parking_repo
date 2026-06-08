@@ -1,5 +1,4 @@
 import axios from 'axios';
-import { Platform } from 'react-native';
 
 /**
  * URL del backend detectada automáticamente según la plataforma.
@@ -61,7 +60,7 @@ export interface CancelacionResponse {
  */
 export async function getParkings(): Promise<Estacionamiento[]> {
   const { data } = await apiClient.get<Estacionamiento[]>('/parking');
-  return data;
+  return Array.isArray(data) ? data : [];
 }
 
 /**
