@@ -7,17 +7,39 @@ import {
   RefreshControl,
   ActivityIndicator,
   TouchableOpacity,
-  Alert,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 
-import { getParkings, reserveSpot, Estacionamiento } from '../services/api';
+import { getParkings, Estacionamiento } from '../services/api';
 import { ParkingSpot } from '../components/ParkingSpot';
 import { QRModal } from '../components/QRModal';
 import { supabase } from '../services/supabase';
 
-// ─── Hook personalizado ───────────────────────────────────
+// ─── Fuentes ─────────────────────────────────────────────────────────────────
+
+const serif = Platform.select({ web: '"Playfair Display", Georgia, serif', default: undefined });
+const sans  = Platform.select({ web: '"Inter", system-ui, sans-serif',      default: undefined });
+
+// ─── Paleta ───────────────────────────────────────────────────────────────────
+
+const C = {
+  bg:          '#08121E',
+  card:        '#0F1E30',
+  elevated:    '#162840',
+  gold:        '#C9A84C',
+  goldGlow:    'rgba(201,168,76,0.10)',
+  goldBorder:  'rgba(201,168,76,0.18)',
+  cream:       '#EDE6D3',
+  muted:       '#6E8299',
+  mutedFaint:  'rgba(110,130,153,0.14)',
+  green:       '#27AE60',
+  amber:       '#C9A84C',
+  crimson:     '#E53E50',
+};
+
+// ─── Tipos ────────────────────────────────────────────────────────────────────
 
 interface ReservaActiva {
   parkingId: string;
@@ -31,11 +53,13 @@ interface LoadingSpot {
   spot: 'A' | 'B';
 }
 
+// ─── Hook de datos ────────────────────────────────────────────────────────────
+
 function useParkingData() {
-  const [parkings, setParkings] = useState<Estacionamiento[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [parkings,     setParkings]     = useState<Estacionamiento[]>([]);
+  const [isLoading,    setIsLoading]    = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error,        setError]        = useState<string | null>(null);
 
   const fetchData = useCallback(async (showRefresh = false) => {
     if (showRefresh) setIsRefreshing(true);
@@ -44,194 +68,140 @@ function useParkingData() {
       setParkings(data);
       setError(null);
     } catch (err: any) {
-      const msg =
-        err?.response?.data?.message ??
-        'No se pudo conectar al servidor. Verifica tu red.';
-      setError(msg);
+      setError(err?.response?.data?.message ?? 'No se pudo conectar al servidor. Verifica tu red.');
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
     }
   }, []);
 
-  // Carga inicial
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  useEffect(() => { fetchData(); }, [fetchData]);
 
-  // Polling automático cada 10 segundos para actualizar el estado
   useEffect(() => {
     const interval = setInterval(() => fetchData(), 10_000);
     return () => clearInterval(interval);
   }, [fetchData]);
 
-  // Suscripción a Supabase Realtime para actualizaciones en tiempo real
   useEffect(() => {
-    const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-    if (!supabaseAnonKey || supabaseAnonKey === 'TU_SUPABASE_ANON_KEY_AQUI') {
-      console.warn('⚠️ Supabase Anon Key no configurada en mobile/.env. Las actualizaciones en tiempo real no funcionarán hasta que la agregues.');
-      return;
-    }
+    const key = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+    if (!key || key === 'TU_SUPABASE_ANON_KEY_AQUI') return;
 
-    console.log('📡 Conectando a Supabase Realtime...');
     const channel = supabase
-      .channel('custom-update-channel')
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'estacionamientos',
-        },
+      .channel('estacionamientos-live')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'estacionamientos' },
         (payload) => {
-          console.log('🔔 ¡Actualización en Supabase Realtime recibida!', payload.new);
-          const updatedParking = payload.new as Estacionamiento;
-          
-          setParkings((prevParkings) =>
-            prevParkings.map((p) =>
-              p.id === updatedParking.id ? { ...p, ...updatedParking } : p
-            )
-          );
-        }
-      )
-      .subscribe((status) => {
-        console.log(`📡 Supabase Realtime status: ${status}`);
-      });
+          const updated = payload.new as Estacionamiento;
+          setParkings((prev) => prev.map((p) => p.id === updated.id ? { ...p, ...updated } : p));
+        })
+      .subscribe();
 
-    return () => {
-      console.log('🔌 Desconectando canal Supabase Realtime');
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, []);
 
   return { parkings, isLoading, isRefreshing, error, refetch: fetchData };
 }
 
-// ─── Pantalla principal ───────────────────────────────────
+// ─── Pantalla principal ───────────────────────────────────────────────────────
 
 export default function HomeScreen() {
   const { parkings, isLoading, isRefreshing, error, refetch } = useParkingData();
-
   const [reservaActiva, setReservaActiva] = useState<ReservaActiva | null>(null);
-  const [loadingSpot, setLoadingSpot] = useState<LoadingSpot | null>(null);
-  const [modalVisible, setModalVisible] = useState(false);
+  const [loadingSpot] = useState<LoadingSpot | null>(null);
+  const [modalVisible,  setModalVisible]  = useState(false);
 
-  const handleReserve = async (parkingId: string, spot: 'A' | 'B') => {
-    // Abrimos el modal primero para confirmación de reserva
+  const handleReserve = (parkingId: string, spot: 'A' | 'B') => {
     const parking = parkings.find((p) => p.id === parkingId);
     if (!parking) return;
-    
-    setReservaActiva({
-      parkingId,
-      token: null,
-      cajon: spot,
-      estacionamiento: parking.nombre,
-    });
+    setReservaActiva({ parkingId, token: null, cajon: spot, estacionamiento: parking.nombre });
     setModalVisible(true);
   };
 
   const handleViewReservation = (token: string, spot: 'A' | 'B', parkingName: string) => {
     const parking = parkings.find((p) => p.nombre === parkingName);
     if (!parking) return;
-
-    setReservaActiva({
-      parkingId: parking.id,
-      token,
-      cajon: spot,
-      estacionamiento: parkingName,
-    });
+    setReservaActiva({ parkingId: parking.id, token, cajon: spot, estacionamiento: parkingName });
     setModalVisible(true);
   };
 
   const handleReservedFromModal = (token: string) => {
-    setReservaActiva((prev) => (prev ? { ...prev, token } : null));
+    setReservaActiva((prev) => prev ? { ...prev, token } : null);
   };
 
-  const handleModalClose = () => {
-    setModalVisible(false);
-    setReservaActiva(null);
-  };
+  const handleModalClose = () => { setModalVisible(false); setReservaActiva(null); };
 
-  const handleBarrierSuccess = () => {
-    refetch();
-  };
-
-  // ── Render: Cargando ──
+  // ── Cargando ──
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={s.container}>
         <StatusBar style="light" />
-        <View style={styles.centeredContent}>
-          <ActivityIndicator size="large" color="#6366F1" />
-          <Text style={styles.loadingText}>Conectando al servidor...</Text>
+        <View style={s.centered}>
+          <ActivityIndicator size="large" color={C.gold} />
+          <Text style={s.loadingText}>Conectando al servidor...</Text>
         </View>
       </SafeAreaView>
     );
   }
 
-  // ── Render: Error ──
+  // ── Error ──
   if (error && parkings.length === 0) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={s.container}>
         <StatusBar style="light" />
-        <View style={styles.centeredContent}>
-          <Text style={styles.errorIcon}>📡</Text>
-          <Text style={styles.errorTitle}>Sin conexión</Text>
-          <Text style={styles.errorText}>{error}</Text>
-          <TouchableOpacity style={styles.retryButton} onPress={() => refetch()}>
-            <Text style={styles.retryText}>Reintentar</Text>
+        <View style={s.centered}>
+          <Text style={s.errorIcon}>📡</Text>
+          <Text style={s.errorTitle}>Sin conexión</Text>
+          <Text style={s.errorText}>{error}</Text>
+          <TouchableOpacity style={s.retryBtn} onPress={() => refetch()}>
+            <Text style={s.retryText}>Reintentar</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
     );
   }
 
-  // ── Render principal ──
+  // ── Principal ──
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={s.container} edges={['top']}>
       <StatusBar style="light" />
 
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={s.scroll}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing}
             onRefresh={() => refetch(true)}
-            tintColor="#6366F1"
-            colors={['#6366F1']}
+            tintColor={C.gold}
+            colors={[C.gold]}
           />
         }
       >
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.headerTop}>
+        {/* ── Header ── */}
+        <View style={s.header}>
+          <View style={s.headerTop}>
             <View>
-              <Text style={styles.headerEyebrow}>Sistema IoT</Text>
-              <Text style={styles.headerTitle}>Smart Parking</Text>
+              <Text style={s.eyebrow}>Sistema IoT</Text>
+              <Text style={s.headerTitle}>Smart Parking</Text>
             </View>
-            <View style={styles.liveIndicator}>
-              <View style={styles.liveDot} />
-              <Text style={styles.liveText}>EN VIVO</Text>
+            <View style={s.livePill}>
+              <View style={s.liveDot} />
+              <Text style={s.liveText}>En Vivo</Text>
             </View>
           </View>
-          <Text style={styles.headerSubtitle}>
-            Reserva tu cajón y accede sin contacto
-          </Text>
+          <Text style={s.subtitle}>Reserva tu cajón y accede sin contacto</Text>
+          <View style={s.headerDivider} />
         </View>
 
-        {/* Estadísticas rápidas */}
+        {/* ── Stats ── */}
         <StatsBar parkings={parkings} />
 
-        {/* Lista de estacionamientos */}
-        <Text style={styles.sectionTitle}>Estacionamientos</Text>
+        {/* ── Lista ── */}
+        <Text style={s.sectionLabel}>Estacionamientos</Text>
 
         {parkings.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyIcon}>🏗️</Text>
-            <Text style={styles.emptyText}>
-              No hay estacionamientos registrados.
-            </Text>
+          <View style={s.emptyState}>
+            <Text style={s.emptyIcon}>🏗️</Text>
+            <Text style={s.emptyText}>No hay estacionamientos registrados.</Text>
           </View>
         ) : (
           parkings.map((parking) => (
@@ -246,7 +216,6 @@ export default function HomeScreen() {
         )}
       </ScrollView>
 
-      {/* Modal QR */}
       {reservaActiva && (
         <QRModal
           visible={modalVisible}
@@ -255,7 +224,7 @@ export default function HomeScreen() {
           estacionamiento={reservaActiva.estacionamiento}
           parkingId={reservaActiva.parkingId}
           onClose={handleModalClose}
-          onSuccess={handleBarrierSuccess}
+          onSuccess={() => refetch()}
           onReserved={handleReservedFromModal}
         />
       )}
@@ -263,75 +232,58 @@ export default function HomeScreen() {
   );
 }
 
-// ─── Sub-componente: StatsBar ─────────────────────────────
+// ─── StatsBar ─────────────────────────────────────────────────────────────────
 
 function StatsBar({ parkings }: { parkings: Estacionamiento[] }) {
-  const totalSpots = parkings.length * 2;
-  const occupied = parkings.reduce(
-    (acc, p) =>
-      acc + (p.ocupado_a ? 1 : 0) + (p.ocupado_b ? 1 : 0),
-    0,
-  );
-  const reserved = parkings.reduce(
-    (acc, p) =>
-      acc + (p.reservado_a ? 1 : 0) + (p.reservado_b ? 1 : 0),
-    0,
-  );
-  const available = totalSpots - occupied - reserved;
+  const total    = parkings.length * 2;
+  const occupied = parkings.reduce((n, p) => n + (p.ocupado_a ? 1 : 0) + (p.ocupado_b ? 1 : 0), 0);
+  const reserved = parkings.reduce((n, p) => n + (p.reservado_a ? 1 : 0) + (p.reservado_b ? 1 : 0), 0);
+  const free     = total - occupied - reserved;
 
   return (
-    <View style={styles.statsBar}>
-      <StatItem value={available} label="Libres" color="#22C55E" />
-      <View style={styles.statsDivider} />
-      <StatItem value={reserved} label="Reservados" color="#F59E0B" />
-      <View style={styles.statsDivider} />
-      <StatItem value={occupied} label="Ocupados" color="#EF4444" />
+    <View style={s.statsCard}>
+      <StatItem value={free}     label="Libres"     color={C.green}   />
+      <View style={s.statSep} />
+      <StatItem value={reserved} label="Reservados" color={C.amber}   />
+      <View style={s.statSep} />
+      <StatItem value={occupied} label="Ocupados"   color={C.crimson} />
     </View>
   );
 }
 
-function StatItem({
-  value,
-  label,
-  color,
-}: {
-  value: number;
-  label: string;
-  color: string;
-}) {
+function StatItem({ value, label, color }: { value: number; label: string; color: string }) {
   return (
-    <View style={styles.statItem}>
-      <Text style={[styles.statValue, { color }]}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
+    <View style={s.statItem}>
+      <Text style={[s.statValue, { color }]}>{value}</Text>
+      <Text style={s.statLabel}>{label}</Text>
     </View>
   );
 }
 
-// ─── Sub-componente: ParkingCard ──────────────────────────
+// ─── ParkingCard ──────────────────────────────────────────────────────────────
 
 interface ParkingCardProps {
   parking: Estacionamiento;
   loadingSpot: LoadingSpot | null;
-  onReserve: (parkingId: string, spot: 'A' | 'B') => void;
-  onViewReservation: (token: string, spot: 'A' | 'B', parkingName: string) => void;
+  onReserve: (id: string, spot: 'A' | 'B') => void;
+  onViewReservation: (token: string, spot: 'A' | 'B', name: string) => void;
 }
 
 function ParkingCard({ parking, loadingSpot, onReserve, onViewReservation }: ParkingCardProps) {
   return (
-    <View style={styles.parkingCard}>
-      {/* Nombre del estacionamiento */}
-      <View style={styles.parkingHeader}>
-        <Text style={styles.parkingIcon}>🏢</Text>
-        <View>
-          <Text style={styles.parkingName}>{parking.nombre}</Text>
-          {parking.ubicacion_gps && (
-            <Text style={styles.parkingLocation}>📍 {parking.ubicacion_gps}</Text>
-          )}
+    <View style={s.parkingCard}>
+      <View style={s.parkingHeader}>
+        <View style={s.parkingIconBg}>
+          <Text style={s.parkingIconEmoji}>🏢</Text>
+        </View>
+        <View style={s.parkingInfo}>
+          <Text style={s.parkingName}>{parking.nombre}</Text>
+          {parking.ubicacion_gps ? (
+            <Text style={s.parkingLocation}>📍 {parking.ubicacion_gps}</Text>
+          ) : null}
         </View>
       </View>
-
-      {/* Cajones A y B */}
-      <View style={styles.spotsRow}>
+      <View style={s.spotsRow}>
         {(['A', 'B'] as const).map((spot) => (
           <ParkingSpot
             key={spot}
@@ -339,9 +291,7 @@ function ParkingCard({ parking, loadingSpot, onReserve, onViewReservation }: Par
             spot={spot}
             onReserve={onReserve}
             onViewReservation={onViewReservation}
-            isLoading={
-              loadingSpot?.parkingId === parking.id && loadingSpot?.spot === spot
-            }
+            isLoading={loadingSpot?.parkingId === parking.id && loadingSpot?.spot === spot}
           />
         ))}
       </View>
@@ -349,200 +299,170 @@ function ParkingCard({ parking, loadingSpot, onReserve, onViewReservation }: Par
   );
 }
 
-// ─── Estilos ─────────────────────────────────────────────
+// ─── Estilos ──────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0F172A',
-  },
-  scrollContent: {
-    paddingHorizontal: 20,
-    paddingBottom: 40,
-  },
-  centeredContent: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 16,
-  },
+const s = StyleSheet.create({
+  container: { flex: 1, backgroundColor: C.bg },
+  centered:  { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 14, paddingHorizontal: 32 },
+  scroll:    { paddingHorizontal: 20, paddingBottom: 48 },
 
   // Header
-  header: {
-    paddingTop: 24,
-    paddingBottom: 20,
-  },
-  headerTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 8,
-  },
-  headerEyebrow: {
-    fontSize: 12,
-    color: '#6366F1',
+  header:     { paddingTop: 28, paddingBottom: 6 },
+  headerTop:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 },
+  eyebrow: {
+    fontSize: 11,
+    color: C.gold,
     fontWeight: '700',
-    letterSpacing: 1.5,
+    letterSpacing: 2.5,
     textTransform: 'uppercase',
-    marginBottom: 2,
+    marginBottom: 3,
+    fontFamily: sans,
   },
   headerTitle: {
-    fontSize: 32,
+    fontSize: 36,
     fontWeight: '900',
-    color: '#F1F5F9',
-    letterSpacing: -1,
+    color: C.cream,
+    fontFamily: serif,
+    letterSpacing: 0.5,
   },
-  headerSubtitle: {
-    fontSize: 14,
-    color: '#64748B',
-    marginTop: 4,
+  subtitle: {
+    fontSize: 13,
+    color: C.muted,
+    marginBottom: 20,
+    fontFamily: sans,
   },
-  liveIndicator: {
+  headerDivider: {
+    height: 1,
+    backgroundColor: C.goldBorder,
+    marginBottom: 20,
+  },
+  livePill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: 'rgba(34, 197, 94, 0.1)',
+    backgroundColor: 'rgba(39,174,96,0.08)',
     borderRadius: 20,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderWidth: 1,
-    borderColor: 'rgba(34, 197, 94, 0.2)',
+    borderColor: 'rgba(39,174,96,0.22)',
   },
   liveDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
-    backgroundColor: '#22C55E',
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: C.green,
   },
   liveText: {
-    color: '#22C55E',
+    color: C.green,
     fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1,
+    fontWeight: '700',
+    fontFamily: sans,
+    letterSpacing: 0.8,
   },
 
   // Stats
-  statsBar: {
+  statsCard: {
     flexDirection: 'row',
-    backgroundColor: '#1E293B',
+    backgroundColor: C.card,
     borderRadius: 16,
-    padding: 16,
+    paddingVertical: 18,
+    paddingHorizontal: 8,
     marginBottom: 28,
     borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.08)',
+    borderColor: C.goldBorder,
   },
-  statItem: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 2,
-  },
-  statsDivider: {
-    width: 1,
-    backgroundColor: 'rgba(148, 163, 184, 0.12)',
-  },
+  statItem:  { flex: 1, alignItems: 'center', gap: 3 },
+  statSep:   { width: 1, backgroundColor: C.mutedFaint },
   statValue: {
-    fontSize: 28,
+    fontSize: 32,
     fontWeight: '900',
+    fontFamily: serif,
     letterSpacing: -1,
   },
   statLabel: {
-    fontSize: 11,
-    color: '#64748B',
+    fontSize: 10,
+    color: C.muted,
     fontWeight: '600',
+    fontFamily: sans,
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: 0.8,
   },
 
   // Section
-  sectionTitle: {
-    fontSize: 16,
+  sectionLabel: {
+    fontSize: 11,
     fontWeight: '700',
-    color: '#94A3B8',
-    letterSpacing: 0.5,
+    color: C.gold,
+    letterSpacing: 2,
     textTransform: 'uppercase',
     marginBottom: 14,
+    fontFamily: sans,
   },
 
-  // Parking Card
+  // Parking card
   parkingCard: {
-    backgroundColor: '#1E293B',
+    backgroundColor: C.card,
     borderRadius: 20,
     padding: 16,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.08)',
+    borderColor: C.goldBorder,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 12,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 14,
+    elevation: 5,
   },
   parkingHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
     marginBottom: 14,
   },
-  parkingIcon: {
-    fontSize: 24,
+  parkingIconBg: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: C.goldGlow,
+    borderWidth: 1,
+    borderColor: C.goldBorder,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
+  parkingIconEmoji: { fontSize: 20 },
+  parkingInfo: { flex: 1 },
   parkingName: {
     fontSize: 17,
-    fontWeight: '800',
-    color: '#F1F5F9',
-    letterSpacing: -0.3,
+    fontWeight: '700',
+    color: C.cream,
+    fontFamily: serif,
+    letterSpacing: 0.2,
   },
   parkingLocation: {
-    fontSize: 12,
-    color: '#64748B',
+    fontSize: 11,
+    color: C.muted,
     marginTop: 1,
+    fontFamily: sans,
   },
-  spotsRow: {
-    flexDirection: 'row',
-  },
+  spotsRow: { flexDirection: 'row' },
 
-  // Loading
-  loadingText: {
-    color: '#64748B',
-    fontSize: 15,
-    marginTop: 8,
-  },
-
-  // Error
-  errorIcon: { fontSize: 48 },
-  errorTitle: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: '#F1F5F9',
-  },
-  errorText: {
-    color: '#64748B',
-    fontSize: 14,
-    textAlign: 'center',
-    maxWidth: 260,
-  },
-  retryButton: {
-    backgroundColor: '#6366F1',
+  // Loading / error
+  loadingText: { color: C.muted, fontSize: 14, fontFamily: sans },
+  errorIcon:   { fontSize: 48 },
+  errorTitle:  { fontSize: 22, fontWeight: '800', color: C.cream, fontFamily: serif },
+  errorText:   { color: C.muted, fontSize: 13, textAlign: 'center', fontFamily: sans, lineHeight: 20 },
+  retryBtn: {
+    backgroundColor: C.gold,
     borderRadius: 12,
     paddingHorizontal: 28,
     paddingVertical: 12,
     marginTop: 4,
   },
-  retryText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 15,
-  },
+  retryText: { color: '#08121E', fontWeight: '700', fontSize: 14, fontFamily: sans },
 
   // Empty
-  emptyState: {
-    alignItems: 'center',
-    paddingVertical: 40,
-    gap: 10,
-  },
-  emptyIcon: { fontSize: 40 },
-  emptyText: {
-    color: '#64748B',
-    fontSize: 14,
-  },
+  emptyState: { alignItems: 'center', paddingVertical: 40, gap: 10 },
+  emptyIcon:  { fontSize: 40 },
+  emptyText:  { color: C.muted, fontSize: 13, fontFamily: sans },
 });

@@ -5,15 +5,9 @@ import {
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { Estacionamiento } from '../services/api';
-
-// ─── Tipos ───────────────────────────────────────────────
-
-interface SpotState {
-  ocupado: boolean;
-  reservado: boolean;
-}
 
 interface ParkingSpotProps {
   parking: Estacionamiento;
@@ -23,181 +17,175 @@ interface ParkingSpotProps {
   isLoading?: boolean;
 }
 
-// ─── Helpers ─────────────────────────────────────────────
+const serif = Platform.select({ web: '"Playfair Display", Georgia, serif', default: undefined });
+const sans  = Platform.select({ web: '"Inter", system-ui, sans-serif',      default: undefined });
 
-function getSpotState(parking: Estacionamiento, spot: 'A' | 'B'): SpotState {
+function getState(p: Estacionamiento, spot: 'A' | 'B') {
   return {
-    ocupado: spot === 'A' ? parking.ocupado_a : parking.ocupado_b,
-    reservado: spot === 'A' ? parking.reservado_a : parking.reservado_b,
+    ocupado:  spot === 'A' ? p.ocupado_a  : p.ocupado_b,
+    reservado: spot === 'A' ? p.reservado_a : p.reservado_b,
   };
 }
 
-function getStatusLabel(state: SpotState): string {
-  if (state.ocupado) return 'Ocupado';
-  if (state.reservado) return 'Reservado';
-  return 'Disponible';
-}
-
-// ─── Componente ───────────────────────────────────────────
-
 export const ParkingSpot: React.FC<ParkingSpotProps> = ({
-  parking,
-  spot,
-  onReserve,
-  onViewReservation,
-  isLoading = false,
+  parking, spot, onReserve, onViewReservation, isLoading = false,
 }) => {
-  const state = getSpotState(parking, spot);
-  const isAvailable = !state.ocupado && !state.reservado;
-  const isReserved = state.reservado;
-  const statusLabel = getStatusLabel(state);
-
+  const { ocupado, reservado } = getState(parking, spot);
+  const isAvailable = !ocupado && !reservado;
   const token = spot === 'A' ? parking.token_reserva_a : parking.token_reserva_b;
 
   const handlePress = () => {
-    if (isAvailable) {
-      onReserve(parking.id, spot);
-    } else if (isReserved && token) {
-      onViewReservation(token, spot, parking.nombre);
-    }
+    if (isAvailable) onReserve(parking.id, spot);
+    else if (reservado && token) onViewReservation(token, spot, parking.nombre);
   };
 
-  const buttonEnabled = isAvailable || (isReserved && !!token);
+  const canPress = isAvailable || (reservado && !!token);
 
-  const containerColor = isAvailable
-    ? styles.available
-    : state.reservado
-    ? styles.reserved
-    : styles.occupied;
+  const theme = ocupado
+    ? themes.occupied
+    : reservado
+    ? themes.reserved
+    : themes.available;
 
-  const statusDotColor = isAvailable
-    ? '#22C55E'
-    : state.reservado
-    ? '#F59E0B'
-    : '#EF4444';
+  const statusLabel = ocupado ? 'Ocupado' : reservado ? 'Reservado' : 'Disponible';
+  const spotIcon    = ocupado ? '🚗' : reservado ? '🔒' : '🅿️';
+  const btnLabel    = isAvailable ? 'Reservar' : reservado ? 'Ver QR' : statusLabel;
 
   return (
-    <View style={[styles.spotCard, containerColor]}>
-      {/* Encabezado del cajón */}
-      <View style={styles.spotHeader}>
-        <View style={styles.spotLabelRow}>
-          <View style={[styles.statusDot, { backgroundColor: statusDotColor }]} />
-          <Text style={styles.spotLabel}>Cajón {spot}</Text>
+    <View style={[s.card, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
+      {/* Header row */}
+      <View style={s.header}>
+        <View style={s.labelRow}>
+          <View style={[s.dot, { backgroundColor: theme.indicator }]} />
+          <Text style={s.spotLabel}>Cajón {spot}</Text>
         </View>
-        <Text style={[styles.statusBadge, { color: statusDotColor }]}>
-          {statusLabel}
-        </Text>
+        <View style={[s.badge, { backgroundColor: theme.badgeBg, borderColor: theme.badgeBorder }]}>
+          <Text style={[s.badgeText, { color: theme.indicator }]}>{statusLabel}</Text>
+        </View>
       </View>
 
-      {/* Icono del vehículo */}
-      <Text style={styles.carIcon}>{isAvailable ? '🅿️' : state.reservado ? '🔒' : '🚗'}</Text>
+      {/* Icon */}
+      <Text style={s.icon}>{spotIcon}</Text>
 
-      {/* Botón de reserva */}
+      {/* Button */}
       <TouchableOpacity
         style={[
-          styles.reserveButton,
-          !buttonEnabled && styles.reserveButtonDisabled,
-          isReserved && styles.viewReserveButton,
+          s.btn,
+          { backgroundColor: theme.btnBg, borderColor: theme.btnBorder },
+          !canPress && s.btnDisabled,
         ]}
         onPress={handlePress}
-        disabled={!buttonEnabled || isLoading}
+        disabled={!canPress || isLoading}
         activeOpacity={0.8}
       >
-        {isLoading ? (
-          <ActivityIndicator color="#fff" size="small" />
-        ) : (
-          <Text style={styles.reserveButtonText}>
-            {isAvailable ? 'Reservar' : isReserved ? 'Ver QR' : statusLabel}
-          </Text>
-        )}
+        {isLoading
+          ? <ActivityIndicator color="#fff" size="small" />
+          : <Text style={[s.btnText, !canPress && s.btnTextDisabled]}>{btnLabel}</Text>}
       </TouchableOpacity>
     </View>
   );
 };
 
-// ─── Estilos ─────────────────────────────────────────────
+const themes = {
+  available: {
+    cardBg:      'rgba(27, 90, 55, 0.12)',
+    border:      'rgba(39, 174, 96, 0.28)',
+    indicator:   '#27AE60',
+    badgeBg:     'rgba(39, 174, 96, 0.12)',
+    badgeBorder: 'rgba(39, 174, 96, 0.25)',
+    btnBg:       '#1A6B40',
+    btnBorder:   'rgba(39, 174, 96, 0.4)',
+  },
+  reserved: {
+    cardBg:      'rgba(180, 130, 0, 0.10)',
+    border:      'rgba(201, 168, 76, 0.3)',
+    indicator:   '#C9A84C',
+    badgeBg:     'rgba(201, 168, 76, 0.12)',
+    badgeBorder: 'rgba(201, 168, 76, 0.28)',
+    btnBg:       '#8A6210',
+    btnBorder:   'rgba(201, 168, 76, 0.4)',
+  },
+  occupied: {
+    cardBg:      'rgba(92, 16, 32, 0.15)',
+    border:      'rgba(200, 40, 60, 0.25)',
+    indicator:   '#E53E50',
+    badgeBg:     'rgba(200, 40, 60, 0.10)',
+    badgeBorder: 'rgba(200, 40, 60, 0.22)',
+    btnBg:       'rgba(100, 116, 139, 0.25)',
+    btnBorder:   'rgba(100, 116, 139, 0.2)',
+  },
+};
 
-const styles = StyleSheet.create({
-  spotCard: {
+const s = StyleSheet.create({
+  card: {
     flex: 1,
     borderRadius: 16,
-    padding: 16,
-    marginHorizontal: 6,
+    padding: 14,
+    marginHorizontal: 5,
     alignItems: 'center',
     borderWidth: 1,
   },
-  available: {
-    backgroundColor: 'rgba(34, 197, 94, 0.1)',
-    borderColor: 'rgba(34, 197, 94, 0.3)',
-  },
-  reserved: {
-    backgroundColor: 'rgba(245, 158, 11, 0.1)',
-    borderColor: 'rgba(245, 158, 11, 0.3)',
-  },
-  occupied: {
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
-    borderColor: 'rgba(239, 68, 68, 0.3)',
-  },
-  spotHeader: {
+  header: {
     width: '100%',
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 10,
   },
-  spotLabelRow: {
+  labelRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
   },
-  statusDot: {
-    width: 8,
-    height: 8,
+  dot: {
+    width: 7,
+    height: 7,
     borderRadius: 4,
   },
   spotLabel: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#E2E8F0',
-    letterSpacing: 0.5,
-  },
-  statusBadge: {
-    fontSize: 11,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-  },
-  carIcon: {
-    fontSize: 36,
-    marginVertical: 12,
-  },
-  reserveButton: {
-    backgroundColor: '#6366F1',
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    width: '100%',
-    alignItems: 'center',
-    marginTop: 8,
-    shadowColor: '#6366F1',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  reserveButtonDisabled: {
-    backgroundColor: 'rgba(100, 116, 139, 0.4)',
-    shadowOpacity: 0,
-    elevation: 0,
-  },
-  viewReserveButton: {
-    backgroundColor: '#F59E0B',
-    shadowColor: '#F59E0B',
-  },
-  reserveButtonText: {
-    color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '700',
-    letterSpacing: 0.5,
+    color: '#C8D8E8',
+    fontFamily: serif,
+    letterSpacing: 0.4,
+  },
+  badge: {
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderWidth: 1,
+  },
+  badgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    fontFamily: sans,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  icon: {
+    fontSize: 34,
+    marginVertical: 10,
+  },
+  btn: {
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    width: '100%',
+    alignItems: 'center',
+    marginTop: 6,
+    borderWidth: 1,
+  },
+  btnDisabled: {
+    opacity: 0.45,
+  },
+  btnText: {
+    color: '#EDE6D3',
+    fontSize: 13,
+    fontWeight: '700',
+    fontFamily: sans,
+    letterSpacing: 0.4,
+  },
+  btnTextDisabled: {
+    color: '#7A8FA6',
   },
 });
