@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "Smart Parking",
+    "slug": "smart-parking",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#0F172A"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.smartparking.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0F172A"
+      },
+      "package": "com.smartparking.app"
+    },
+    "plugins": ["expo-router"],
+    "scheme": "smartparking",
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
